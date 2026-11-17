@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+_site/
+results/run_*.csv
+.venv/
+venv/
+.DS_Store
+.idea/
+.vscode/

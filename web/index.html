@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autonomous Sewage Treatment Plant – Mesa Multi-Agent Simulation</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1>Autonomous Sewage Treatment Plant</h1>
+      <p class="sub">10 MLD activated-sludge plant · 11 Mesa agents · Indian discharge norms · the Python code runs in your browser</p>
+    </div>
+    <div class="clock">
+      <div id="simTime">--</div>
+      <div id="simHour" class="muted">loading…</div>
+    </div>
+  </header>
+
+  <!-- Loading screen: Python + Mesa start inside the browser (Pyodide) -->
+  <div id="loader">
+    <div class="loader-box">
+      <div class="spinner"></div>
+      <h2>Starting the plant</h2>
+      <ol id="loadSteps">
+        <li data-step="py">Loading Python in the browser</li>
+        <li data-step="pkgs">Loading numpy, pandas, scipy, scikit-learn</li>
+        <li data-step="mesa">Installing Mesa</li>
+        <li data-step="code">Loading the plant code</li>
+        <li data-step="train">Training the ML models</li>
+      </ol>
+      <p class="muted small">First visit takes 15–40 seconds. Later visits are faster.</p>
+      <p id="loadError" class="error hidden"></p>
+    </div>
+  </div>
+
+  <section class="controls">
+    <div class="group">
+      <button id="btnRun" class="primary" disabled>▶ Run</button>
+      <button id="btnStep" disabled>+1 hour</button>
+      <button id="btnDay" disabled>+1 day</button>
+      <label>Speed
+        <select id="speed">
+          <option value="1">1 h / tick</option>
+          <option value="3" selected>3 h / tick</option>
+          <option value="12">12 h / tick</option>
+          <option value="24">1 day / tick</option>
+        </select>
+      </label>
+    </div>
+    <div class="group">
+      <label>Control
+        <select id="mode"></select>
+      </label>
+      <label>Norms
+        <select id="norms"></select>
+      </label>
+      <label>Data
+        <select id="dataSel">
+          <option value="demo">Demo month (simulated)</option>
+          <option value="upload">Upload CSV…</option>
+        </select>
+      </label>
+      <input type="file" id="fileInput" accept=".csv,text/csv" class="hidden">
+      <button id="btnReset" disabled>↺ Reset</button>
+    </div>
+    <div class="group">
+      <label>Inject shock
+        <select id="injectSel"></select>
+      </label>
+      <button id="btnInject" disabled>Inject (4 h)</button>
+    </div>
+  </section>
+  <p id="dataLabel" class="data-label muted small"></p>
+
+  <main class="grid">
+    <section class="card plant">
+      <div class="card-head">
+        <h2>Plant – live</h2>
+        <span id="eventBadge" class="badge">–</span>
+      </div>
+      <div class="svg-wrap"><svg id="plantSvg" viewBox="0 0 1120 300" role="img" aria-label="Plant diagram"></svg></div>
+      <p class="legend small muted">
+        <span class="dot ok"></span>normal <span class="dot warn"></span>stressed <span class="dot bad"></span>failing
+        · numbers under each unit are what leaves it this hour
+      </p>
+    </section>
+
+    <section class="card compliance">
+      <div class="card-head">
+        <h2>Treated water vs norms</h2>
+        <span id="passBadge" class="badge">–</span>
+      </div>
+      <table id="complianceTable" class="kv"></table>
+      <p id="discharge" class="small muted"></p>
+    </section>
+
+    <section class="card kpis">
+      <h2>So far</h2>
+      <div class="kpi-grid" id="kpis"></div>
+    </section>
+
+    <section class="card detect">
+      <h2>Monitoring agent</h2>
+      <div id="detection"></div>
+    </section>
+
+    <section class="card charts">
+      <div class="card-head">
+        <h2>Treated water (effluent)</h2>
+        <div class="tabs" id="effTabs"></div>
+      </div>
+      <canvas id="chartEff" height="200"></canvas>
+      <h3>Raw sewage arriving (influent) <span class="small muted">· shaded = alarm raised</span></h3>
+      <div class="tabs" id="infTabs"></div>
+      <canvas id="chartInf" height="160"></canvas>
+      <h3>Aeration tank</h3>
+      <canvas id="chartAer" height="160"></canvas>
+      <p class="small muted chart-legend" id="aerLegend"></p>
+    </section>
+
+    <section class="card log">
+      <h2>Agent messages</h2>
+      <ul id="msgLog"></ul>
+    </section>
+
+    <section class="card evaluate">
+      <div class="card-head">
+        <h2>Evaluate: does the AI help?</h2>
+        <button id="btnEval" disabled>Run all 3 modes on this data</button>
+      </div>
+      <p class="small muted">Simulates the whole dataset three times (AI, rules-only, conventional plant) and grades the detectors
+        against the true event labels in the data. Takes about 20–60 seconds in the browser.</p>
+      <div id="evalOut"></div>
+    </section>
+  </main>
+
+  <footer class="small muted">
+    Influent data is <strong>simulated</strong> from typical Indian raw-sewage values (CPHEEO); process formulas are simplified.
+    Norms: NGT order 30-04-2019 and MoEFCC notification 13-10-2017. Built with Mesa + Pyodide.
+    <a href="sample_upload.csv" download>Sample CSV format</a>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
