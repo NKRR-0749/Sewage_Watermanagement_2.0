@@ -66,7 +66,7 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 .compliance { grid-column: span 4; }
 .kpis { grid-column: span 4; }
 .detect { grid-column: span 4; }
-.charts { grid-column: span 8; }
+.charts { grid-column: span 8; max-height: 600px; overflow-y: auto; }
 .log { grid-column: span 4; }
 .evaluate { grid-column: span 12; }
 @media (max-width: 1000px) {
@@ -109,12 +109,13 @@ td.pass { color: var(--ok); font-weight: 600; } td.fail { color: var(--bad); fon
 canvas { width: 100%; display: block; }
 .chart-legend span { margin-right: 12px; }
 
-#msgLog { list-style: none; margin: 0; padding: 0; max-height: 520px; overflow-y: auto; font-size: 12px; }
+#msgLog { list-style: none; margin: 0; padding: 0; height: 320px; overflow-y: auto; font-size: 12px; }
 #msgLog li { padding: 6px 0; border-bottom: 1px solid var(--line); }
 #msgLog .who { font-weight: 600; }
 #msgLog .kind { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--chip); margin-left: 4px; color: var(--muted); }
 #msgLog .t { color: var(--muted); font-variant-numeric: tabular-nums; }
 
+#evalOut { max-height: 420px; overflow-y: auto; }
 #evalOut table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; font-size: 13px; font-variant-numeric: tabular-nums; }
 #evalOut th, #evalOut td { border-bottom: 1px solid var(--line); padding: 5px 6px; text-align: right; }
 #evalOut th:first-child, #evalOut td:first-child { text-align: left; }
