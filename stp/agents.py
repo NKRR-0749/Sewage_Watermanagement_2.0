@@ -23,8 +23,12 @@ Treatment-unit agents (each controls one piece of equipment in units.py)
 
 Control modes (set on the model):
     "ai"     - smart control, ML + rule detection, ML forecasting
-    "rules"  - smart control, rule detection only, no forecasting
-    "fixed"  - a conventional plant: fixed settings, nobody acts on alarms
+    "rules"    - smart control, rule detection only, no forecasting
+    "operator" - a WELL-RUN conventional plant: DO feedback control on the
+                 blowers (standard SCADA), recycle fixed at its design value, fixed chlorine and filter
+                 timer, and a human who acts on alarms after
+                 config.OPERATOR_DELAY_HOURS (divert, pH dosing, storm pumping)
+    "fixed"    - a conventional plant: fixed settings, nobody acts on alarms
 """
 
 import math
@@ -32,7 +36,7 @@ import math
 import mesa
 import pandas as pd
 
-from .config import PLANT, DESIGN_FLOW
+from .config import PLANT, DESIGN_FLOW, OPERATOR_DELAY_HOURS, OPERATOR_RECYCLE
 from .ml import anomaly_features, rule_check, classify_event
 from .units import (Preliminary, EqualizationTank, HoldingTank, PrimaryClarifier,
                     AerationTank, SecondaryClarifier, TertiaryFilter, Chlorination,
@@ -41,7 +45,11 @@ from .water import Water, mix, check_norms
 
 # Shock types that should be kept OUT of the biology (diverted to holding).
 # Storm water is NOT diverted: it is dilute, the plant has to take it.
-DIVERT_TYPES = {"industrial_discharge", "acid_dump", "alkaline_dump", "septage_dumping", "unusual_load"}
+# "unusual_load" (anomaly with no identified cause, usually an ML-only alarm)
+# is reported but NOT diverted: tested over many random months, diverting on
+# uncertain alarms wastes holding-tank space needed for real toxic shocks and
+# lowers compliance (see results/EVALUATION.md, section 5).
+DIVERT_TYPES = {"industrial_discharge", "acid_dump", "alkaline_dump", "septage_dumping"}
 
 EVENT_NAMES = {
     "industrial_discharge": "industrial discharge", "acid_dump": "acid dump",
@@ -64,6 +72,12 @@ class PlantAgent(mesa.Agent):
     @property
     def smart(self):
         return self.model.mode in ("ai", "rules")
+
+    @property
+    def operator_acts(self):
+        """Operator mode: True once the current alarm has lasted long enough
+        for the human operator to respond."""
+        return self.model.mode == "operator" and self.model.alarm_streak > OPERATOR_DELAY_HOURS
 
 
 # ===========================================================================
@@ -96,7 +110,7 @@ class MonitoringAgent(PlantAgent):
         m = self.model
         row = pd.DataFrame([m.history[-1]])
         feats = anomaly_features(row).iloc[0].to_dict()
-        broken = rule_check(feats)
+        broken = rule_check(feats, m.rule_limits)
         rules_alarm = bool(broken)
 
         if m.hour in m.precomputed_scores and m.hour not in m.feed.injected:
@@ -106,7 +120,7 @@ class MonitoringAgent(PlantAgent):
         ml_alarm = score > m.detector.threshold
 
         alarm = (rules_alarm or ml_alarm) if m.mode == "ai" else rules_alarm
-        kind = classify_event(feats) if alarm else None
+        kind = classify_event(feats, m.rule_limits) if alarm else None
 
         m.detection = {
             "rules": broken, "rules_alarm": rules_alarm,
@@ -116,6 +130,7 @@ class MonitoringAgent(PlantAgent):
         m.detections.append({"hour": m.hour, "true_event": m.raw_event,
                              "rules_alarm": rules_alarm, "ml_alarm": bool(ml_alarm), "alarm": alarm})
 
+        m.alarm_streak = m.alarm_streak + 1 if alarm else 0
         if alarm:
             m.stats["alarms"] += 1
             why = ", ".join(broken) if broken else f"ML anomaly score {m.detection['ml_score']:.2f}"
@@ -139,7 +154,7 @@ class ForecastAgent(PlantAgent):
         if m.mode == "ai":
             hist = pd.DataFrame(past[-24:])
             pred = m.forecaster.predict(hist, m.timestamp)
-            source = "ML forecast"
+            source = m.forecaster.source()
         else:
             pred = {"flow": last["flow"], "BOD": last["BOD"], "NH4": last["NH4"]}
             source = "last hour"
@@ -190,8 +205,10 @@ class EqualizationAgent(PlantAgent):
         alerts = self.inbox("ALERT")
         shock = next((a for a in alerts if a.data.get("type") in DIVERT_TYPES), None)
 
+        acts = self.smart or self.operator_acts
+
         # 1. divert a shock load into the holding tank
-        if self.smart and shock is not None:
+        if acts and shock is not None:
             before = inflow.flow
             inflow = self.holding.add(inflow)
             info["diverted"] = before - inflow.flow
@@ -210,10 +227,17 @@ class EqualizationAgent(PlantAgent):
         m.recirc_water = m.backwash_water = None
 
         # 3. slowly release the holding tank when it is safe
-        if self.smart and shock is None and self.holding.volume > 0 and m.aeration_health > 0.8:
+        if (self.smart or m.mode == "operator") and shock is None and self.holding.volume > 0 \
+                and m.aeration_health > 0.8:
             # release faster when the stored water is mild, slower when it is strong
             held = self.holding.contents
             rate = 0.12 * DESIGN_FLOW * min(1.0, 300.0 / max(held.inert_COD, 1.0), 600.0 / max(held.BOD, 1.0))
+            # never release so fast that the blend becomes toxic again (bacteria are
+            # harmed above 150 mg/L non-biodegradable COD; keep a margin at 120)
+            safe_inert = 120.0
+            if held.inert_COD > safe_inert:
+                rate = min(rate, inflow.flow * max(0.0, safe_inert - inflow.inert_COD)
+                           / (held.inert_COD - safe_inert))
             released = self.holding.take(rate)
             info["released"] = released.flow
             inflow = mix(inflow, released)
@@ -222,7 +246,7 @@ class EqualizationAgent(PlantAgent):
         self.avg_inflow = 0.9 * self.avg_inflow + 0.1 * inflow.flow
         outflow = self.avg_inflow + (self.tank.level - 0.5) * self.tank.capacity / 6
         storm = any(a.data.get("type") == "storm_inflow" for a in alerts)
-        if self.smart and storm:
+        if acts and storm:
             # storm: pump forward at full capacity to keep room in the tank
             outflow = PLANT["max_forward_flow"]
             self.send("Monitoring", "STORM_MODE", "Storm inflow - forward pumps at maximum to avoid overflow")
@@ -233,7 +257,9 @@ class EqualizationAgent(PlantAgent):
         self.tank.capacity -= outflow
 
         # 5. pH correction (smart only)
-        if self.smart and not 6.5 <= self.tank.contents.pH <= 8.5:
+        # (the operator also neutralises while draining the holding tank)
+        releasing = m.mode == "operator" and info["released"] > 0
+        if (acts or releasing) and not 6.5 <= self.tank.contents.pH <= 8.5:
             before_ph = self.tank.contents.pH
             info["ph_shift"] = self.tank.correct_ph(7.2)
             m.stats["ph_chemical_kg"] += abs(info["ph_shift"]) * outflow * 0.04
@@ -282,6 +308,8 @@ class AerationAgent(PlantAgent):
     the oxygen the bacteria will need (feed-forward), aiming for DO 2.0 mg/L,
     plus a correction for last hour's DO error (feedback). Adjusts the
     internal recycle to keep nitrate low.
+    Operator: standard DO feedback controller (no forecast), recycle at the
+    design value config.OPERATOR_RECYCLE.
     Fixed: blowers at 60% (sized for the average load), recycle at 3x."""
     label = "Aeration"
     DO_SETPOINT = 2.0
@@ -292,6 +320,7 @@ class AerationAgent(PlantAgent):
         self.trim = 0.0
         self.recycle = 3.0
         self.last_inlet = None
+        self.op_blower = 0.60
 
     def planned_blower(self):
         m = self.model
@@ -323,6 +352,10 @@ class AerationAgent(PlantAgent):
             last_no3 = m.last_effluent.NO3 if m.last_effluent is not None else 5.0
             self.recycle = max(PLANT["internal_recycle_range"][0],
                                min(PLANT["internal_recycle_range"][1], self.recycle + 0.3 * (last_no3 - 5.0) / 5.0))
+        elif m.mode == "operator":
+            # plain feedback: adjust last hour's blower setting by the DO error
+            self.op_blower = max(0.1, min(1.0, self.op_blower + 0.12 * (self.DO_SETPOINT - self.unit.DO)))
+            blower, self.recycle = self.op_blower, OPERATOR_RECYCLE
         else:
             blower, self.recycle = 0.60, 3.0
 

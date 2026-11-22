@@ -129,5 +129,14 @@ RAW_SEWAGE = {
     "FC": 1.0e7,           # MPN/100 mL
 }
 
+# "operator" mode: a well-run conventional plant. Standard DO feedback control
+# on the blowers, and a human operator who acts on alarms (divert a shock,
+# dose lime/acid, storm pumping) only after the alarm has lasted this long:
+# time to notice, walk to the panel, confirm with a grab sample.
+OPERATOR_DELAY_HOURS = 3
+# The operator's fixed internal recycle, set at design time high enough for the
+# NGT nitrogen limit (the "fixed" plant keeps a generic 3x).
+OPERATOR_RECYCLE = 5.0
+
 # Simulation time step: one step = one hour of plant operation.
 HOURS_PER_STEP = 1

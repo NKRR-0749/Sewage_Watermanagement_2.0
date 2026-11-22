@@ -48,6 +48,15 @@ EVENT_TYPES = {
     "high_strength_food": "Food-processing waste: stronger organic load (subtle)",
 }
 
+# Shock types that are NEVER used for tuning or in the demo month. They test
+# whether the plant copes with something it was not designed around.
+UNSEEN_EVENT_TYPES = {
+    "solvent_discharge": "Solvent/chemical discharge: lots of non-biodegradable COD, but normal pH",
+    "ammonia_spike": "Fertiliser/urine-rich discharge: ammonia x2.2, nothing else changes",
+    "gradual_drift": "Slow 30-hour rise in sewage strength (BOD, COD, NH4 up to +60%)",
+}
+UNSEEN_DURATION = {"solvent_discharge": 5, "ammonia_spike": 6, "gradual_drift": 30}
+
 # The demo month (July = monsoon). (day, start hour, duration in hours, event)
 DEMO_EVENTS = [
     (3, 9, 6, "industrial_discharge"),
@@ -88,6 +97,14 @@ def apply_event(row, event, hour_into_event=0):
         r["BOD"] *= 1.7
         r["COD"] *= 1.8
         r["NH4"] *= 1.1
+    elif event == "solvent_discharge":
+        r["COD"] += 650.0
+    elif event == "ammonia_spike":
+        r["NH4"] *= 2.2
+    elif event == "gradual_drift":
+        f = 1 + 0.6 * min(1.0, (hour_into_event + 1) / 24)
+        for p in ("BOD", "COD", "NH4"):
+            r[p] *= f
     else:
         raise ValueError(f"Unknown event: {event}")
     r["event"] = event
@@ -145,6 +162,32 @@ def generate_influent(days=30, seed=7, start="2026-07-01", events=None):
         df[c] = df[c].round(2)
     df["FC"] = df["FC"].round(-3)
     return df
+
+
+# How long each regular shock lasts in a random month (hours, min-max)
+EVENT_DURATION = {"industrial_discharge": (4, 7), "acid_dump": (2, 4), "alkaline_dump": (2, 5),
+                  "storm_inflow": (6, 16), "septage_dumping": (3, 5), "high_strength_food": (4, 6)}
+
+
+def random_month(seed, n_events=9, days=30, event_types=None, durations=None):
+    """A month with a different random sewage pattern AND a different random
+    schedule of shock events. Used to check that results are not a lucky month."""
+    rng = np.random.default_rng(1000 + seed)
+    types = list(event_types or EVENT_TYPES)
+    events, used = [], set()
+    while len(events) < n_events:
+        day = int(rng.integers(2, days))
+        if day in used:
+            continue
+        used.add(day)
+        ev = types[len(events) % len(types)] if len(events) < len(types) else types[int(rng.integers(len(types)))]
+        if durations:
+            dur = durations[ev]
+        else:
+            lo, hi = EVENT_DURATION[ev]
+            dur = int(rng.integers(lo, hi + 1))
+        events.append((day, int(rng.integers(0, 24)), dur, ev))
+    return generate_influent(days=days, seed=seed, start="2026-07-01", events=sorted(events))
 
 
 def demo_dataset():

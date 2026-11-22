@@ -129,7 +129,7 @@ footer a { color: var(--accent); }
   position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 88%, transparent);
   display: flex; align-items: center; justify-content: center; z-index: 10; backdrop-filter: blur(2px);
 }
-.loader-box { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 24px 28px; width: min(420px, 92vw); }
+.loader-box { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 24px 28px; width: min(460px, 92vw); max-height: 92vh; overflow: auto; }
 .loader-box h2 { font-size: 17px; }
 #loadSteps { padding-left: 20px; margin: 10px 0; }
 #loadSteps li { color: var(--muted); margin: 4px 0; }
@@ -154,3 +154,11 @@ footer a { color: var(--accent); }
 .bar-bg { fill: var(--chip); }
 .bar-fg { fill: var(--ok); }
 .flow-label { font-size: 11px; fill: var(--muted); }
+
+/* key results shown while Python loads */
+.headline { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.headline h3 { font-size: 14px; margin: 0 0 6px; }
+.headline table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.headline td { padding: 2px 4px; }
+.headline td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.headline p { margin: 6px 0 0; }

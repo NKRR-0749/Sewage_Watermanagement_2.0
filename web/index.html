@@ -33,6 +33,7 @@
       </ol>
       <p class="muted small">First visit takes 15–40 seconds. Later visits are faster.</p>
       <p id="loadError" class="error hidden"></p>
+      <div id="headline" class="headline hidden"></div>
     </div>
   </div>
 
@@ -60,6 +61,7 @@
       <label>Data
         <select id="dataSel">
           <option value="demo">Demo month (simulated)</option>
+          <option value="real">Real plant data (UCI, Spain)</option>
           <option value="upload">Upload CSV…</option>
         </select>
       </label>
@@ -129,16 +131,18 @@
     <section class="card evaluate">
       <div class="card-head">
         <h2>Evaluate: does the AI help?</h2>
-        <button id="btnEval" disabled>Run all 3 modes on this data</button>
+        <button id="btnEval" disabled>Run all 4 modes on this data</button>
       </div>
-      <p class="small muted">Simulates the whole dataset three times (AI, rules-only, conventional plant) and grades the detectors
+      <p class="small muted">Simulates the whole dataset four times (AI, rules-only, well-run conventional with operator, fixed settings) and grades the detectors
         against the true event labels in the data. Takes about 20–60 seconds in the browser.</p>
       <div id="evalOut"></div>
     </section>
   </main>
 
   <footer class="small muted">
-    Influent data is <strong>simulated</strong> from typical Indian raw-sewage values (CPHEEO); process formulas are simplified.
+    Demo influent is <strong>simulated</strong> from typical Indian raw-sewage values (CPHEEO). Real data option:
+    <a href="https://archive.ics.uci.edu/dataset/106/water+treatment+plant" target="_blank" rel="noopener">UCI Water Treatment Plant dataset</a>
+    (Poch, 1993, CC BY 4.0), measured influent of a municipal plant in Manresa, Spain. Process formulas are simplified.
     Norms: NGT order 30-04-2019 and MoEFCC notification 13-10-2017. Built with Mesa + Pyodide.
     <a href="sample_upload.csv" download>Sample CSV format</a>
   </footer>

@@ -29,6 +29,7 @@ from .ml import get_models
 MODES = {
     "ai": "Autonomous - AI (ML detection + ML forecasting)",
     "rules": "Autonomous - rules only (no ML)",
+    "operator": "Well-run conventional plant (DO control + human operator, 3 h delay)",
     "fixed": "Conventional plant (fixed settings, no automation)",
 }
 
@@ -42,7 +43,14 @@ STREAM_ORDER = ["raw", "preliminary", "equalization", "primary", "aeration",
 
 
 class STPModel(mesa.Model):
-    def __init__(self, mode="ai", norms=DEFAULT_NORMS, data=None, seed=1):
+    def __init__(self, mode="ai", norms=DEFAULT_NORMS, data=None, seed=1, train_data=None, train_key="simulated",
+                 rule_limits=None):
+        """data: hourly influent (default: simulated demo month).
+        train_data / train_key: what the ML models learn 'normal' from
+        (default: the simulated normal month). For real data use
+        real_data.uci_train() with train_key="uci".
+        rule_limits: detection-rule limits (default: ml.DEFAULT_RULE_LIMITS);
+        use ml.calibrate_rule_limits(train_data) to tune them to a site."""
         super().__init__(rng=seed)
         if mode not in MODES:
             raise ValueError(f"mode must be one of {list(MODES)}")
@@ -52,7 +60,8 @@ class STPModel(mesa.Model):
         self.norms = norms
         self.feed = InfluentFeed(data if data is not None else demo_dataset())
         self.bus = MessageBus()
-        self.detector, self.forecaster = get_models()
+        self.detector, self.forecaster = get_models(train_data, train_key)
+        self.rule_limits = rule_limits
         # score every row of the feed in one go (fast); injected rows are re-scored live
         self.precomputed_scores = dict(enumerate(self.detector.scores(self.feed.df)))
 
@@ -69,6 +78,7 @@ class STPModel(mesa.Model):
         self.effluent = self.last_effluent = None
         self.recirc_water = self.backwash_water = None
         self.aeration_health = 1.0
+        self.alarm_streak = 0
         self.stats = {"hours": 0, "compliant_hours": 0, "discharged_m3": 0.0, "compliant_m3": 0.0,
                       "energy_kwh": 0.0, "chlorine_kg": 0.0, "ph_chemical_kg": 0.0,
                       "diverted_m3": 0.0, "recirculated_m3": 0.0, "overflow_m3": 0.0,

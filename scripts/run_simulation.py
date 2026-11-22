@@ -5,6 +5,8 @@ Run the plant from the command line.
     python scripts/run_simulation.py --mode fixed
     python scripts/run_simulation.py --norms moefcc2017_metro
     python scripts/run_simulation.py --data my_readings.csv --hours 48
+    python scripts/run_simulation.py --real                 # REAL data (UCI, Manresa plant)
+    python scripts/run_simulation.py --real --days 60
 
 Prints a summary and saves every hour to results/run_<mode>.csv
 """
@@ -27,13 +29,24 @@ def main():
     p.add_argument("--norms", choices=list(DISCHARGE_NORMS), default="ngt2019")
     p.add_argument("--data", help="CSV of hourly influent readings (default: built-in demo month)")
     p.add_argument("--hours", type=int, help="hours to simulate (default: whole dataset)")
+    p.add_argument("--real", action="store_true",
+                   help="use the REAL UCI Water Treatment Plant data (test days; ML + rules calibrated on training days)")
+    p.add_argument("--days", type=int, help="with --real: only the first N test days")
     args = p.parse_args()
 
-    data = load_influent_csv(args.data) if args.data else None
-    model = STPModel(mode=args.mode, norms=args.norms, data=data)
+    site, label = {}, args.data or "built-in demo month (simulated, July)"
+    if args.real:
+        from stp import real_data
+        from stp.evaluation_real import site_setup
+        data = real_data.uci_test(args.days)
+        _, limits, site = site_setup()
+        label = f"REAL - {real_data.SOURCE}; calibrated rule limits {limits}"
+    else:
+        data = load_influent_csv(args.data) if args.data else None
+    model = STPModel(mode=args.mode, norms=args.norms, data=data, **site)
     print(f"Mode:  {MODES[args.mode]}")
     print(f"Norms: {DISCHARGE_NORMS[args.norms]['label']}")
-    print(f"Data:  {args.data or 'built-in demo month (simulated, July)'} - {len(model.feed)} hours")
+    print(f"Data:  {label} - {len(model.feed)} hours")
     model.run(args.hours)
 
     s = model.summary()
@@ -46,12 +59,16 @@ def main():
     print(f"Shock load diverted:       {s['diverted_m3']:,} m³")
     print(f"Raw sewage overflow:       {s['overflow_m3']:,} m³")
     print(f"Alarms raised:             {s['alarms']}")
-    print("\nDetector scores against the true event labels:")
-    print(json.dumps(s["detection"], indent=2))
+    if args.real:
+        print("\nThe real data has no shock labels, so detectors are not graded here.")
+        print("Run  python scripts/evaluate_real.py  (grades them on real data + injected shocks).")
+    else:
+        print("\nDetector scores against the true event labels:")
+        print(json.dumps(s["detection"], indent=2))
 
     out = os.path.join(ROOT, "results")
     os.makedirs(out, exist_ok=True)
-    path = os.path.join(out, f"run_{args.mode}.csv")
+    path = os.path.join(out, f"run_{args.mode}{'_real' if args.real else ''}.csv")
     model.datacollector.get_model_vars_dataframe().to_csv(path, index=False)
     print(f"\nHourly results saved to {path}")
 

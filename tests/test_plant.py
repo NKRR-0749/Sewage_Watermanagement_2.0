@@ -8,6 +8,7 @@ a broken claim.
 import os
 import sys
 
+import pandas as pd
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -100,3 +101,91 @@ def test_injected_event_is_detected_and_diverted():
     m.step()
     assert m.detection["alarm"] and m.detection["type"] == "acid_dump"
     assert m.unit_info["equalization"]["diverted"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Real data (UCI Water Treatment Plant, Manresa)
+# ---------------------------------------------------------------------------
+from stp import real_data  # noqa: E402
+from stp.config import DESIGN_FLOW  # noqa: E402
+from stp.ml import DEFAULT_RULE_LIMITS, calibrate_rule_limits  # noqa: E402
+
+
+def test_real_dataset_loads_and_converts_to_hourly():
+    daily = real_data.load_uci_daily()
+    assert len(daily) == 520
+    hourly = real_data.uci_hourly()
+    assert len(hourly) == 520 * 24
+    assert hourly[["flow", "pH", "BOD", "COD", "TSS", "NH4"]].isna().sum().sum() == 0
+    # concentrations are used as measured: daily means are preserved
+    assert abs(hourly["BOD"].mean() - daily["BOD"].mean()) / daily["BOD"].mean() < 0.02
+    # flow is scaled so the median day equals our 10 MLD design flow
+    assert abs(hourly.groupby("day")["flow"].sum().median() - DESIGN_FLOW * 24) / (DESIGN_FLOW * 24) < 0.03
+
+
+def test_real_train_and_test_days_do_not_overlap():
+    train, test = real_data.uci_train(), real_data.uci_test()
+    assert train["day"].max() == real_data.TRAIN_DAYS
+    assert test["day"].min() == real_data.TRAIN_DAYS + 1
+
+
+def test_rule_calibration_never_loosens_ph_and_never_goes_below_default():
+    limits = calibrate_rule_limits(real_data.uci_train())
+    assert limits["pH_low"] == DEFAULT_RULE_LIMITS["pH_low"]
+    assert limits["pH_high"] == DEFAULT_RULE_LIMITS["pH_high"]
+    assert all(limits[k] >= DEFAULT_RULE_LIMITS[k] for k in DEFAULT_RULE_LIMITS)
+
+
+def test_plant_runs_on_real_data_with_site_calibration():
+    from stp.evaluation_real import site_setup
+    _, _, site = site_setup()
+    m = STPModel(mode="ai", data=real_data.uci_test(3), **site).run()
+    s = m.summary()
+    assert s["hours"] == 72
+    assert 0 <= s["compliant_hours_pct"] <= 100
+
+
+def test_injected_shocks_on_real_data_are_caught():
+    from stp.evaluation_real import site_setup
+    _, _, site = site_setup()
+    data = real_data.uci_test_with_shocks(days=20)
+    assert (data["event"] != "normal").sum() > 0
+    m = STPModel(mode="ai", data=data, **site).run()
+    assert m.summary()["detection"]["used_by_plant"]["recall"] > 0.7
+
+
+# ---------------------------------------------------------------------------
+# Baselines, overflow, unseen shocks, forecaster self-check
+# ---------------------------------------------------------------------------
+def test_overflow_counts_against_compliance():
+    """Raw sewage bypassing treatment must make the discharge fail."""
+    from stp.influent import apply_event
+    df = demo_dataset().iloc[:72].copy()
+    rows = df.to_dict("records")
+    for i in range(30, 60):                     # a very long, very big storm
+        rows[i] = apply_event(rows[i], "storm_inflow", 5)
+        rows[i]["flow"] *= 2.0
+    m = STPModel(mode="ai", data=pd.DataFrame(rows)).run()
+    assert m.stats["overflow_m3"] > 0
+    assert m.summary()["compliant_hours_pct"] < 100
+
+
+def test_operator_mode_sits_between_fixed_and_ai():
+    res = {mode: STPModel(mode=mode).run().summary()["compliant_hours_pct"]
+           for mode in ("ai", "operator", "fixed")}
+    assert res["fixed"] < res["operator"] < res["ai"]
+
+
+def test_ml_catches_unseen_ammonia_spike_that_rules_miss():
+    from stp.influent import UNSEEN_DURATION, random_month
+    data = random_month(seed=100, n_events=6, event_types=["ammonia_spike"], durations=UNSEEN_DURATION)
+    det = STPModel(mode="ai", data=data).run().summary()["detection"]
+    assert det["ml"]["recall"] > 0.9
+    assert det["rules"]["recall"] < 0.5
+
+
+def test_forecaster_only_uses_ml_where_it_beat_last_hour():
+    from stp.ml import get_models
+    fc = get_models()[1]
+    for t, v in fc.validation.items():
+        assert fc.use_ml[t] == (v["ml_mae"] < v["last_hour_mae"])

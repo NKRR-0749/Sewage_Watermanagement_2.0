@@ -5,9 +5,10 @@ Build the website that GitHub Pages serves, into the folder _site/.
 
 What goes in _site/:
     index.html, style.css, app.js, worker.js   the dashboard (from web/)
-    stp_code.zip                                the Python package stp/ + web/bridge.py
+    stp_code.zip                                the Python package stp/ + web/bridge.py + real dataset
     wheels/mesa-*.whl + manifest.json           Mesa, installed into the browser's Python
     sample_upload.csv                           example data file
+    summary.json                                key results for the start screen
 
 The GitHub Actions workflow (.github/workflows/pages.yml) runs this script
 on every push, so you never need to run it yourself unless you want to test
@@ -38,6 +39,9 @@ def main():
     for name in ["index.html", "style.css", "app.js", "worker.js"]:
         shutil.copy(os.path.join(ROOT, "web", name), SITE)
     shutil.copy(os.path.join(ROOT, "data", "sample_upload.csv"), SITE)
+    summary = os.path.join(ROOT, "results", "summary.json")
+    if os.path.exists(summary):          # key results, shown while Python loads
+        shutil.copy(summary, SITE)
     open(os.path.join(SITE, ".nojekyll"), "w").close()
 
     with zipfile.ZipFile(os.path.join(SITE, "stp_code.zip"), "w", zipfile.ZIP_DEFLATED) as z:
@@ -45,6 +49,8 @@ def main():
             if f.endswith(".py"):
                 z.write(os.path.join(ROOT, "stp", f), f"stp/{f}")
         z.write(os.path.join(ROOT, "web", "bridge.py"), "bridge.py")
+        # the real dataset (read by stp/real_data.py from ../data/real/)
+        z.write(os.path.join(ROOT, "data", "real", "uci_water_treatment.data"), "data/real/uci_water_treatment.data")
 
     wheel_dir = os.path.join(SITE, "wheels")
     subprocess.run([sys.executable, "-m", "pip", "download", f"mesa=={MESA_VERSION}", "--no-deps",

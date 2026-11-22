@@ -96,32 +96,63 @@ All are `mesa.Agent` subclasses in `stp/agents.py`.
 
 This is the question examiners ask most. The answer is in the numbers.
 
-### AI piece 1: Isolation Forest anomaly detector (`stp/ml.py`)
-- **What:** an unsupervised model that learns what *normal* sewage looks like and flags hours that look different.
-- **Trained on:** a separate month of normal sewage (`training_dataset()`, June). It **never sees** the July test month or its events.
-- **Threshold:** set so it raises false alarms on only 1 % of normal training hours.
-- **Graded against:** the **true event labels** written into the data when it was generated. It is *not* graded against the rule detector's output; that mistake was in the old project.
+### AI piece 1: anomaly detector (`stp/ml.py`)
+- **What:** two unsupervised checks that learn what *normal* sewage looks like:
+  - an **Isolation Forest**, which catches unusual *combinations*, such as strong BOD with normal pH;
+  - a **robust z-score per parameter**, which measures how many "typical deviations" a reading is
+    from its normal median. It catches single-parameter shocks such as pH 3.
+- **Why both:** an Isolation Forest scores a value far outside the training range no worse than the
+  most extreme normal value. On its own, it caught **0 %** of the acid and alkaline dumps. With the
+  z-score added, the ML catches **100 %**.
+- **Trained on:** a separate month of normal sewage (`training_dataset()`, June). It **never sees** any test month.
+- **Threshold:** each check is set so it raises false alarms on only 0.5 % of normal training hours.
+- **Graded against:** the **true event labels** written into the data when it was generated. It is
+  *not* graded against the rule detector's output; that mistake was in the old project.
 
 | Shock (true label) | Rules caught | ML caught |
 |---|---|---|
-| Acid dump / alkaline dump | 100 % | **0 %** |
-| Food-processing waste (subtle) | **0 %** | 40 % |
+| Acid dump / alkaline dump | 100 % | 100 % |
+| Food-processing waste (subtle) | **0 %** | **100 %** |
 | Industrial, septage, storm | 100 % | 100 % |
+| *Unseen:* ammonia spike | 30 % | **100 %** |
+| *Unseen:* slow 30-hour drift | 0 % | **63 %** |
 
-**Honest reading:** they are **complementary**. Rules catch anything that breaks a known limit. The Isolation Forest catches unusual *combinations* that break no single rule, but it is weak at a shock in a single feature like pH. That's a known property of Isolation Forests. So AI mode uses **both**, which gives the highest recall (0.94).
+**What the plant does with an alarm:** a *named* toxic shock (industrial, acid, alkaline, septage)
+is diverted to the holding tank. An alarm with **no identified cause** (usually ML-only) is reported
+but **not diverted**. This was tested: diverting on uncertain alarms filled the holding tank with
+ordinary sewage and lowered compliance (95.4 % → 94.1 %).
 
 ### AI piece 2: Ridge regression load forecaster (`stp/ml.py`)
 - **What:** predicts the next hour's flow, BOD and ammonia from the last 24 hours and the time of day.
 - **Used by:** the AerationAgent, to set the blowers *before* the load arrives.
-- **Result:** flow error is **37 % lower** than "same as last hour". BOD and ammonia forecasts are *no better* than "same as last hour", because the equalization tank already smooths them. Say this honestly in the viva.
+- **Self-check:** it tests itself on the last quarter of its training data and is used only for a
+  quantity where it beats "same as last hour". Otherwise the plant uses last hour's value.
+- **Result:** flow error is **37 % lower** than "same as last hour". On the shock month, BOD and
+  ammonia are slightly *worse* (3–5 %), even though they passed the self-check. Say this honestly.
+
+### The four control modes
+| Mode | What it is |
+|---|---|
+| `ai` | the agents + ML detection + ML forecast |
+| `rules` | the agents, rule detection only, "same as last hour" forecast |
+| `operator` | a **well-run conventional plant**: DO feedback control on the blowers, recycle at its design value (5×), and a human who diverts, doses pH and switches storm pumping **3 hours** after an alarm |
+| `fixed` | fixed settings, and nobody acts |
+
+The `operator` mode exists because comparing against `fixed` alone would be unfair: no real plant
+fails 84 % of the time.
 
 ### What happens if you remove the AI?
-Compare **"ai"** mode with **"rules"** mode. Click *Evaluate* in the dashboard, or run `python scripts/evaluate.py`.
-- Compliance is almost the same (95.7 % vs 95.6 %) on this month.
-- The AI mode catches **2 extra shock hours** (the food-waste event) and has **4 false alarms**. A false alarm only diverts some normal sewage to the holding tank, which is harmless.
-- **The biggest improvement comes from the agents acting at all**: conventional 15.8 % → autonomous 95.6 %.
+Compare **ai** with **rules** over **10 random months** (`python scripts/evaluate.py`):
+- Compliance: 94.9 ± 3.6 % vs 94.7 ± 3.5 %. The difference is about zero.
+- Detection: recall 1.00 vs 0.88 on known shocks, and 0.75 vs 0.20 on **unseen** shock types.
+  The cost is about 13 false alarms a month.
+- **The biggest improvement comes from the agents acting fast**: well-run operator 55.8 % → agents 94.9 %.
+  An operator who could respond instantly would get 91 %.
 
-**One sentence for the viva:** *"The multi-agent control gives the big jump in compliance; the ML adds detection of subtle shocks the rules can't see and a better flow forecast, and we measured both against ground-truth labels."*
+**One sentence for the viva:** *"The big jump in compliance comes from agents that respond within
+the hour; a human 3 hours late lets toxic shocks poison the bacteria. The ML doesn't add
+compliance, but it detects shock types no rule was written for, and we measured all of this over
+10 random months against ground-truth labels."*
 
 ---
 
@@ -148,6 +179,27 @@ Compare **"ai"** mode with **"rules"** mode. Click *Evaluate* in the dashboard, 
 - **Your own data:** any CSV with columns `flow, pH, BOD, COD, TSS, NH4` (optional: `timestamp, temperature, FC, event`). Upload it in the dashboard, or run `python scripts/run_simulation.py --data file.csv`. If you get real data from a local STP, use it this way.
 
 ---
+
+### Real data (`stp/real_data.py`)
+
+The plant also runs on the public **UCI Water Treatment Plant** dataset: 520 days of real daily
+measurements from a municipal plant in Manresa, Spain. The steps:
+
+1. **Read** the influent columns: flow, pH, BOD, COD and suspended solids. Fill the few missing
+   days by interpolation.
+2. **Convert daily to hourly.** Each day's value is placed at noon and the hours in between are
+   interpolated. Flow is shaped with the normal daily pattern. *Day-to-day changes are real; the
+   shape within a day is assumed.*
+3. **Scale the flow** so that the median day equals our 10 MLD. Concentrations stay exactly as
+   measured.
+4. **Estimate ammonia** from COD, because it isn't in the dataset.
+5. **Calibrate to the site** on the first 150 days. The ML retrains, and the rule limits rise to
+   the plant's own normal levels (the COD/BOD limit goes from 2.6 to 3.65). Test on the other 370 days.
+6. **Grade the detectors** by injecting labelled shocks on top of the real days, because the real
+   data has no shock labels.
+7. **Validate** by comparing our effluent with the real plant's measured effluent on the same days.
+
+Results: `results/EVALUATION_REAL.md`. Run it with `python scripts/evaluate_real.py`.
 
 ## 7. The Indian norms (`stp/config.py`)
 
@@ -226,8 +278,10 @@ python -m http.server 8000 --directory _site
 2. Click **+1 day** twice. Point at the diagram: water flows left to right, numbers update each hour, and everything is green.
 3. Click **Run**. On **3 July 09:00** the industrial discharge arrives. The Inlet turns red, the Monitoring agent raises an ALARM, the purple pipe shows the shock **diverted to the holding tank**, and the Agent messages panel shows the conversation. The outlet stays green.
 4. Pause. Pick **Inject shock → Acid dump** and press **Inject**, then **+1 hour**: it's caught live.
-5. Switch **Control → Conventional plant** (this resets), click **+1 day** 3–4 times. The outlet goes red, and the bacteria health bar collapses on day 3.
-6. Scroll down and click **Evaluate**: three modes compared, and each detector graded against the true labels.
+5. Switch **Control → Well-run conventional plant** (this resets), click **+1 day** 3–4 times. On day 3 the operator only reacts after 3 hours. By then the bacteria are poisoned, and nitrogen fails for days afterwards.
+6. Back in AI mode, inject **Ammonia spike (unseen type)**. No rule fires, but the ML raises the alarm.
+7. Pick **Data → Real plant data (UCI, Spain)** to show it running on real measured sewage.
+8. Scroll down and click **Evaluate**: four modes compared, and each detector graded against the true labels.
 
 ---
 
@@ -237,7 +291,8 @@ python -m http.server 8000 --directory _site
 Each unit has its own local decision (blowers, chlorine, backwash), and they must coordinate through messages: the monitor warns the equalization tank, and compliance asks for recirculation. Mesa gives a standard structure (Agent, Model, step, DataCollector) for that.
 
 **Q: Is the data real?**
-No, it is simulated from published typical Indian sewage values, because hourly STP data is not public. The code accepts real data as a CSV with no changes.
+The demo month is simulated from published typical Indian sewage values. The plant also runs on a
+real public dataset (UCI Water Treatment Plant, Manresa, Spain); see the real-data questions below.
 
 **Q: Can the treatment fail?**
 Yes. Under fixed settings it fails 606 of 720 hours. Even autonomous, it fails 31 hours, mostly during storms when the tank overflows. There's a test for this: `test_treatment_can_fail`.
@@ -248,14 +303,44 @@ It is unsupervised, and we don't have labelled shocks from real plants. It learn
 **Q: How did you evaluate the detectors?**
 Against the true labels stored in the data when it was generated, on a month the model never trained on. We report precision, recall and false alarms per detector and per event type.
 
+**Q: Isn't the conventional baseline unfair?**
+That's why there are two baselines. `fixed` is a plant nobody runs. `operator` is a well-run
+conventional plant with DO control, the correct recycle, and a human who acts 3 hours after an
+alarm. Section 5 of EVALUATION.md shows the result for every delay from 0 to 6 hours.
+
+**Q: Is it just one lucky month?**
+No. There are 10 random months, each with new sewage and a new shock schedule. Results are given as mean ± standard deviation, and as paired month-by-month comparisons.
+
+**Q: What if a shock happens that you never designed for?**
+Section 3 of EVALUATION.md uses three shock types that were never used to tune anything. Rules
+catch 20 % of those hours; the ML catches 75 %. You can also inject them live from the dashboard.
+
 **Q: What does the AI change?**
-Show section 5. Honest version: the agent control gives the large gain. The ML adds the subtle-shock detection and the better flow forecast. On this month, compliance with and without ML is nearly the same.
+Honest version: fast agent control gives the large gain. Over 10 months, compliance with and without ML is the same within 0.2 points. The ML adds detection of subtle and never-seen shocks, and a better flow forecast.
 
 **Q: How does the aeration control work?**
 Feed-forward: forecast the next hour's oxygen demand and set the blowers for DO = 2 mg/L. Feedback: correct by last hour's DO error (an integral term).
 
 **Q: Why does TN fail in the conventional plant?**
 Blowers fixed at 60 % and recycle fixed at 3×. At night it over-aerates, and oxygen carried into the anoxic zone stops denitrification. In the morning it under-aerates and ammonia slips through.
+
+**Q: Did you use any real dataset?**
+Yes: the UCI Water Treatment Plant dataset (Poch, 1993). It holds 520 days of real measured inflow
+from a municipal plant in Manresa, Spain. The first 150 days calibrate the ML and the rule limits;
+the other 370 days are the test. Its own measured effluent is used to check our output.
+
+**Q: Why not Indian data?**
+We could not find a public, downloadable influent dataset for an Indian STP. The code accepts any CSV, so a local STP's data can be plugged in.
+
+**Q: The data is daily but your plant runs hourly. Isn't that a problem?**
+The day-to-day values are real. Only the shape within each day is assumed, using a standard
+diurnal pattern. We state this, and it is why the forecast results on real data are partly
+optimistic.
+
+**Q: What did the real data teach you?**
+Thresholds and models tuned for one place don't transfer. Uncalibrated, about 70 % of real hours
+raised alarms. After calibrating on the plant's own normal days, false alarms fell by more than
+90 %. COD is the limiting parameter there, because of the non-biodegradable industrial COD.
 
 **Q: What are the limitations?**
 Simulated data; simplified first-order process formulas (not ASM1); coliforms estimated, not measured; phosphorus not modelled; no sludge handling.
@@ -267,14 +352,14 @@ Pyodide is CPython compiled to WebAssembly. `web/worker.js` loads it, installs M
 
 ## 12. Limitations (put these in your report)
 
-1. **Simulated influent**, not measured. It is calibrated to typical Indian values, not to one specific plant.
+1. **Demo influent is simulated.** The real dataset (UCI, Manresa, Spain) is daily, not Indian, and has no ammonia or shock labels. The hourly shape and ammonia are assumed, and detection on it is graded with injected shocks.
 2. **Simplified process models**: first-order kinetics, quasi-steady oxygen, a simple clarifier formula. Good for showing control behaviour; not for designing a real plant.
 3. **Faecal coliform** cannot be measured online, so the disinfection agent uses an estimate with deliberate random error.
 4. **Not modelled:** phosphorus, sludge handling and wasting, energy for pumps, equipment breakdowns.
-5. **One month of test data** with nine events. The detector scores could change with other data.
+5. **Simulated test months** (10 random months + 5 with unseen shock types). They are still generated by our own code, so they share its assumptions.
 
 ## 13. Ideas for future work
-- Feed real hourly data from a local STP (the CSV upload is ready for it).
+- Feed real hourly data from a local Indian STP (the CSV upload and site calibration are ready for it).
 - Replace the first-order formulas with the standard ASM1 activated-sludge model.
 - Reinforcement learning for the blower agent, compared against the current feed-forward controller.
 - Add a sludge-handling agent and pump energy.

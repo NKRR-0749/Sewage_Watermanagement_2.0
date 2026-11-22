@@ -1,0 +1,35 @@
+{
+  "simulated": {
+    "demo_month": {
+      "ai": 95.8,
+      "rules": 95.6,
+      "operator": 45.3,
+      "fixed": 15.8
+    },
+    "random_months": {
+      "ai": "94.9 \u00b1 3.6",
+      "rules": "94.7 \u00b1 3.5",
+      "operator": "55.8 \u00b1 6.7",
+      "fixed": "24.0 \u00b1 4.5"
+    },
+    "n_months": 10,
+    "unseen_recall": {
+      "ai": "0.75 \u00b1 0.08",
+      "rules": "0.20 \u00b1 0.12"
+    },
+    "operator_delay_h": 3
+  },
+  "real": {
+    "test_days": 370,
+    "modes": {
+      "ai": 68.5,
+      "rules": 68.5,
+      "operator": 63.1,
+      "fixed": 54.9
+    },
+    "false_alarms_calibrated": 358,
+    "false_alarms_uncalibrated": 7631,
+    "real_plant_effluent_COD": 82.0,
+    "our_effluent_COD": 40.2
+  }
+}

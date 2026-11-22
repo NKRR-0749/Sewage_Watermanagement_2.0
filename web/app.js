@@ -37,6 +37,8 @@ const PRETTY = {
   industrial_discharge: "Industrial discharge", acid_dump: "Acid dump", alkaline_dump: "Alkaline dump",
   storm_inflow: "Storm inflow", septage_dumping: "Septage dumping", high_strength_food: "Food-processing waste",
   unusual_load: "Unusual load", normal: "Normal sewage", unknown: "Unlabelled",
+  solvent_discharge: "Solvent discharge (unseen type)", ammonia_spike: "Ammonia spike (unseen type)",
+  gradual_drift: "Gradual drift (unseen type)",
 };
 const pretty = (k) => PRETTY[k] || k;
 const fmt = (v, d = 1) => (v === null || v === undefined || Number.isNaN(v) ? "–" : Number(v).toFixed(d));
@@ -54,7 +56,31 @@ function markLoad(step) {
   });
 }
 
+// Key results from results/summary.json, shown while Python loads
+async function showHeadline() {
+  try {
+    const r = await (await fetch("summary.json")).json();
+    const sim = r.simulated, real = r.real;
+    const NAMES = { ai: "AI agents (ML + rules)", rules: "Agents, rules only", operator: "Well-run conventional + operator", fixed: "Fixed settings" };
+    let html = "";
+    if (sim) {
+      const rows = Object.keys(NAMES).filter((k) => k in sim.random_months)
+        .map((k) => `<tr><td>${NAMES[k]}</td><td class="num">${sim.random_months[k]} %</td></tr>`).join("");
+      html += `<h3>Hours meeting NGT 2019 norms (${sim.n_months} random simulated months)</h3><table>${rows}</table>
+        <p class="small muted">Operator acts ${sim.operator_delay_h} h after an alarm. Detection of never-seen shock types:
+        ML ${sim.unseen_recall.ai} vs rules ${sim.unseen_recall.rules} recall.</p>`;
+    }
+    if (real) {
+      html += `<h3>Real data (UCI, Manresa plant, ${real.test_days} test days)</h3>
+        <p class="small">Effluent COD: real plant ${real.real_plant_effluent_COD} mg/L, this plant ${real.our_effluent_COD} mg/L.
+        Site calibration cut false alarms from ${real.false_alarms_uncalibrated.toLocaleString()} to ${real.false_alarms_calibrated}.</p>`;
+    }
+    if (html) { $("headline").innerHTML = html; $("headline").classList.remove("hidden"); }
+  } catch (e) { /* no summary file: nothing to show */ }
+}
+
 async function start() {
+  showHeadline();
   markLoad("py");
   try {
     await call("__boot");
@@ -150,6 +176,11 @@ $("btnInject").onclick = async () => {
 $("dataSel").onchange = async () => {
   if ($("dataSel").value === "upload") {
     $("fileInput").click();
+  } else if ($("dataSel").value === "real") {
+    stop();
+    $("dataLabel").textContent = "Loading the real dataset and calibrating the ML on it…";
+    await call("use_real");
+    await resetModel();
   } else {
     await call("use_demo");
     await resetModel();
@@ -187,7 +218,8 @@ function render() {
   $("simHour").textContent = `hour ${s.hour} of ${s.total_hours}`;
   const ev = $("eventBadge");
   ev.textContent = "Data label: " + pretty(s.event);
-  ev.className = "badge " + (s.event === "normal" ? "ok" : s.event === "storm_inflow" ? "warn" : "bad");
+  ev.className = "badge " + (s.event === "normal" ? "ok" : s.event === "unknown" ? "" : s.event === "storm_inflow" ? "warn" : "bad");
+  if (s.event === "unknown") ev.textContent = "Real data (no event label)";
   renderPlant(s);
   renderCompliance(s);
   renderKpis(s.summary);
@@ -492,15 +524,16 @@ function renderEval(r) {
     ["Predicting", "ML error (MAE)", "'Same as last hour' error", "Improvement"]);
   const fa = r.false_alarms;
   $("evalOut").innerHTML = `
-    <h3>1 · Same data, three ways of running the plant</h3>${modes}
+    <h3>1 · Same data, four ways of running the plant</h3>${modes}
     <p class="small muted">DO control error (mean distance from 2.0 mg/L): ${Object.entries(r.do_tracking_error).map(([k, v]) => `${k} ${v}`).join(" · ")}</p>
     <div class="eval-cols">
       <div><h3>2 · Which shocks each detector caught (graded against the true labels)</h3>${det}
         <p class="small muted">False alarms on ${fa.normal_hours} normal hours: rules ${fa.rules}, ML ${fa.ml}.</p></div>
       <div><h3>Detector scores</h3>${sc}<h3>3 · ML forecast vs "same as last hour"</h3>${fc}</div>
     </div>
+    ${r.note ? `<p class="small"><b>Real data:</b> ${r.note} Full real-data results: results/EVALUATION_REAL.md in the repo.</p>` : ""}
     <p class="small">Reading this: the agents that act (divert, dose, control oxygen and chlorine) make the biggest difference.
-      Rules and ML catch different shocks, so AI mode uses both. Results are on simulated data with simplified process formulas.</p>`;
+      Rules and ML catch different shocks, so AI mode uses both. Process formulas are simplified.</p>`;
 }
 
 start();
