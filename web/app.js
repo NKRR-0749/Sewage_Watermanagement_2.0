@@ -402,7 +402,9 @@ function renderPlant(s) {
 }
 
 // ---------------------------------------------------------------- charts
-function lineChart(canvas, { series, limits = [], log = false, shade = null, truth = null, fixedMin = null, fixedMax = null, hideAxis = false }) {
+const MAX_WINDOW = 100; // Fixed sliding window of recent hours (0 to 100)
+
+function lineChart(canvas, { series, limits = [], log = false, shade = null, truth = null, fixedMin = null, fixedMax = null, hideAxis = false, windowStart = 0 }) {
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth, H = Number(canvas.getAttribute("height"));
   canvas.width = W * dpr; canvas.height = H * dpr; canvas.style.height = H + "px";
@@ -410,7 +412,7 @@ function lineChart(canvas, { series, limits = [], log = false, shade = null, tru
   g.scale(dpr, dpr);
   g.clearRect(0, 0, W, H);
   const L = 46, R = 10, T = 8, B = 22;
-  const n = Math.max(S.total || 1, 1);
+  const n = MAX_WINDOW;
   const tf = (v) => (log ? Math.log10(Math.max(v, 1)) : v);
   let vals = series.flatMap((s) => s.data.filter((v) => v !== null).map(tf));
   limits.forEach((l) => vals.push(tf(l.value)));
@@ -445,9 +447,10 @@ function lineChart(canvas, { series, limits = [], log = false, shade = null, tru
     g.beginPath(); g.moveTo(L, yy); g.lineTo(W - R, yy); g.stroke();
     if (!hideAxis) g.fillText(log ? "10^" + v.toFixed(1) : v >= 100 ? v.toFixed(0) : v.toFixed(1), 4, yy + 4);
   }
-  // day ticks
-  S.hours.forEach((h, i) => {
-    if (h.t.endsWith("00:00") && (n <= 240 || Number(h.t.slice(8, 10)) % 3 === 1)) {
+  // day / hour ticks across fixed window
+  const hoursSlice = S.hours.slice(windowStart, windowStart + MAX_WINDOW);
+  hoursSlice.forEach((h, i) => {
+    if (h.t.endsWith("00:00") || (n <= 100 && i % 24 === 0)) {
       g.fillText(h.t.slice(5, 10), x(i) - 14, H - 4);
     }
   });
@@ -463,7 +466,7 @@ function lineChart(canvas, { series, limits = [], log = false, shade = null, tru
     g.beginPath();
     let started = false;
     s.data.forEach((v, i) => {
-      if (v === null) return;
+      if (v === null || v === undefined) return;
       const px = x(i), py = y(v);
       started ? g.lineTo(px, py) : g.moveTo(px, py);
       started = true;
@@ -474,6 +477,9 @@ function lineChart(canvas, { series, limits = [], log = false, shade = null, tru
 
 function drawCharts() {
   if (!S.hours.length || !S.snap) return;
+  const startIdx = Math.max(0, S.hours.length - MAX_WINDOW);
+  const win = S.hours.slice(startIdx);
+
   const limits = S.opts.norms[S.snap.norms].limits;
   const p = S.effParam;
   const lim = [];
@@ -483,25 +489,25 @@ function drawCharts() {
     if (lo !== null) lim.push({ value: lo, label: `min ${lo}` });
   }
   lineChart($("chartEff"), {
-    series: [{ data: S.hours.map((h) => h.eff[p]), color: css("--accent"), width: 1.8 }],
-    limits: lim, log: p === "FC",
+    series: [{ data: win.map((h) => h.eff[p]), color: css("--accent"), width: 1.8 }],
+    limits: lim, log: p === "FC", windowStart: startIdx,
   });
   const ip = S.infParam;
   lineChart($("chartInf"), {
-    series: [{ data: S.hours.map((h) => h.inf[ip]), color: css("--water") }],
-    shade: S.hours.map((h) => h.alarm), truth: S.hours.map((h) => h.event),
+    series: [{ data: win.map((h) => h.inf[ip]), color: css("--water") }],
+    shade: win.map((h) => h.alarm), truth: win.map((h) => h.event), windowStart: startIdx,
   });
   lineChart($("chartAer"), {
     series: [
-      { data: S.hours.map((h) => h.DO / 8), color: css("--water"), width: 1.8 },
-      { data: S.hours.map((h) => h.blower / 100), color: css("--muted"), dash: [4, 3] },
-      { data: S.hours.map((h) => h.health), color: css("--ok"), width: 2 },
+      { data: win.map((h) => h.DO / 8), color: css("--water"), width: 1.8 },
+      { data: win.map((h) => h.blower / 100), color: css("--muted"), dash: [4, 3] },
+      { data: win.map((h) => h.health), color: css("--ok"), width: 2 },
     ],
-    fixedMin: 0, fixedMax: 1, hideAxis: true,
+    fixedMin: 0, fixedMax: 1, hideAxis: true, windowStart: startIdx,
   });
   $("aerLegend").innerHTML = `<span style="color:${css("--water")}">━ DO (0–8 mg/L)</span>
     <span>┅ blowers (0–100%)</span><span style="color:${css("--ok")}">━ bacteria health (0–100%)</span>
-    <span>· orange/blue strip under the influent chart = true event in the data</span>`;
+    <span>· last 100 h window · orange/blue strip under influent = true event</span>`;
 }
 window.addEventListener("resize", () => drawCharts());
 
