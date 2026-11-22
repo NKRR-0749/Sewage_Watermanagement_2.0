@@ -3,7 +3,7 @@
 **Autonomous Control of a Sewage Treatment Plant Using Mesa Multi-Agent Systems with ML-Based Anomaly Detection**: sewage water quality monitoring, anomaly detection and autonomous treatment for an Indian sewage treatment plant.
 
 ▶ **Live dashboard:** https://nkrr-0749.github.io/Sewage_Watermanagement_2.0/
-(opens in any browser, phone included. The Python and Mesa code runs inside the page, so first load takes about 20–40 s.)
+(opens in any browser, phone included. The Python and Mesa code runs inside the page, so first load takes about 15–40 s.)
 
 > New to the project? Read **[PROJECT_GUIDE.md](PROJECT_GUIDE.md)** first. It explains every part in plain language.
 
@@ -121,6 +121,20 @@ What the real data shows:
 
 Full report: [results/EVALUATION_REAL.md](results/EVALUATION_REAL.md). On the dashboard, choose
 **Data → Real plant data (UCI, Spain)**. The dashboard uses 60 test days to stay quick.
+
+## Use the dashboard
+
+Open the [live dashboard](https://nkrr-0749.github.io/Sewage_Watermanagement_2.0/) and wait for Python,
+Mesa, and the ML models to load in your browser. The first visit usually takes 15–40 seconds.
+
+- Use **Run**, **+1 hour**, or **+1 day** to advance the plant. **Speed** controls how many hours each
+  run step advances.
+- Choose a **Control** mode or **Norms** standard to compare operating strategies; changing either
+  resets the simulation.
+- Choose **Data** to use the simulated demo, the 60-day real-data demo, or upload your own CSV.
+  The CSV needs `flow, pH, BOD, COD, TSS, NH4`; see [data/sample_upload.csv](data/sample_upload.csv).
+- **Inject (4 h)** adds the selected shock to the next four hours. **Run all 4 modes on this data**
+  compares the control modes on the selected dataset.
 
 ## Run it on your laptop
 
